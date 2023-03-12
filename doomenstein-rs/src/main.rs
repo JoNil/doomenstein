@@ -1,7 +1,20 @@
-use std::f32::NAN;
+use std::{
+    f32::{
+        consts::{FRAC_PI_2, FRAC_PI_4, PI, TAU},
+        NAN,
+    },
+    fs::{self, File},
+    path::Path,
+};
 
-const SCREEN_WIDTH: u32 = 384;
-const SCREEN_HEIGHT: u32 = 216;
+use parse_display::FromStr;
+use sdl2::{
+    render::{RendererContext, Texture},
+    video::{Window, WindowContext},
+};
+
+const SCREEN_WIDTH: usize = 384;
+const SCREEN_HEIGHT: usize = 216;
 
 const EYE_Z: f32 = 1.65;
 const HFOV: f32 = 90.0 * std::f32::consts::PI / 180.0;
@@ -10,13 +23,15 @@ const VFOV: f32 = 0.5;
 const ZNEAR: f32 = 0.0001;
 const ZFAR: f32 = 128.0;
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, FromStr)]
+#[display("{x} {y}")]
 struct v2 {
     x: f32,
     y: f32,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, FromStr)]
+#[display("{x} {y}")]
 struct v2i {
     x: i32,
     y: i32,
@@ -102,7 +117,9 @@ fn abgr_mul(col: u32, a: u32) -> u32 {
     0xFF000000 | (br & 0xFF00FF) | (g & 0x00FF00)
 }
 
-struct wall {
+#[derive(FromStr)]
+#[display("{a} {b} {portal}")]
+struct Wall {
     a: v2i,
     b: v2i,
     portal: i32,
@@ -111,139 +128,132 @@ struct wall {
 // sector id for "no sector"
 const SECTOR_NONE: u32 = 0;
 const SECTOR_MAX: u32 = 128;
-/*
-struct sector {
-    int id;
-    usize firstwall, nwalls;
-    f32 zfloor, zceil;
-};
 
-static struct {
-    SDL_Window *window;
-    SDL_Renderer *renderer;
-    SDL_Texture *texture, *debug;
-    u32 *pixels;
-    bool quit;
+#[derive(FromStr)]
+#[display("{id} {firstwall} {nwalls} {zfloor} {zceil}")]
+struct Sector {
+    id: i32,
+    firstwall: usize,
+    nwalls: usize,
+    zfloor: f32,
+    zceil: f32,
+}
 
-    struct { struct sector arr[32]; usize n; } sectors;
-    struct { struct wall arr[128]; usize n; } walls;
+struct Camera {
+    pos: v2,
+    angle: f32,
+    anglecos: f32,
+    anglesin: f32,
+    sector: i32,
+}
 
-    u16 y_lo[SCREEN_WIDTH], y_hi[SCREEN_WIDTH];
+struct State {
+    window: Window,
+    renderer: RendererContext<WindowContext>,
+    texture: Texture,
+    debug: Texture,
+    pixels: Vec<u32>,
+    quit: bool,
 
-    struct {
-        v2 pos;
-        f32 angle, anglecos, anglesin;
-        int sector;
-    } camera;
+    sectors: [Sector; 32],
+    sectors_count: usize,
 
-    bool sleepy;
-} state;
+    walls: [Wall; 32],
+    walls_count: usize,
+
+    y_lo: [u16; SCREEN_WIDTH],
+    y_hi: [u16; SCREEN_WIDTH],
+
+    camera: Camera,
+
+    sleepy: bool,
+}
 
 // convert angle in [-(HFOV / 2)..+(HFOV / 2)] to X coordinate
-static inline int screen_angle_to_x(f32 angle) {
-    return
-        ((int) (SCREEN_WIDTH / 2))
-            * (1.0f - tan(((angle + (HFOV / 2.0)) / HFOV) * PI_2 - PI_4));
+fn screen_angle_to_x(angle: f32) -> i32 {
+    ((SCREEN_WIDTH as f32 / 2.0)
+        * (1.0 - (((angle + (HFOV / 2.0)) / HFOV) * FRAC_PI_2 - FRAC_PI_4).tan())) as i32
 }
 
 // noramlize angle to +/-PI
-static inline f32 normalize_angle(f32 a) {
-    return a - (TAU * floor((a + PI) / TAU));
+fn normalize_angle(a: f32) -> f32 {
+    return a - (TAU * ((a + PI) / TAU).floor());
 }
 
 // world space -> camera space (translate and rotate)
-static inline v2 world_pos_to_camera(v2 p) {
-    const v2 u = { p.x - state.camera.pos.x, p.y - state.camera.pos.y };
-    return (v2) {
-        u.x * state.camera.anglesin - u.y * state.camera.anglecos,
-        u.x * state.camera.anglecos + u.y * state.camera.anglesin,
+fn world_pos_to_camera(state: &State, p: v2) -> v2 {
+    let u = v2 {
+        x: p.x - state.camera.pos.x,
+        y: p.y - state.camera.pos.y,
     };
+    v2 {
+        x: u.x * state.camera.anglesin - u.y * state.camera.anglecos,
+        y: u.x * state.camera.anglecos + u.y * state.camera.anglesin,
+    }
 }
 
-static void present();
-
 // load sectors from file -> state
-static int load_sectors(const char *path) {
+fn load_sectors(state: &mut State, path: &Path) -> Result<(), String> {
     // sector 0 does not exist
-    state.sectors.n = 1;
+    state.sectors_count = 1;
 
-    FILE *f = fopen(path, "r");
-    if (!f) { return -1; }
+    let str = fs::read_to_string(path).map_err(|e| format!("Unable to read file {path:?}: {e}"))?;
 
-    int retval = 0;
-    enum { SCAN_SECTOR, SCAN_WALL, SCAN_NONE } ss = SCAN_NONE;
+    enum State {
+        Sector,
+        Wall,
+    }
 
-    char line[1024], buf[64];
-    while (fgets(line, sizeof(line), f)) {
-        const char *p = line;
-        while (isspace(*p)) {
-            p++;
+    let mut parse_state = State::Sector;
+
+    for (i, line) in str.lines().enumerate() {
+        let line = line.trim();
+
+        if line == "[SECTOR]" {
+            parse_state = State::Sector;
+        }
+        if line == "[WALL]" {
+            parse_state = State::Wall;
         }
 
-        // skip line, empty or comment
-        if (!*p || *p == '#') {
+        if line.starts_with('#') || line.is_empty() {
             continue;
-        } else if (*p == '[') {
-            strncpy(buf, p + 1, sizeof(buf));
-            const char *section = strtok(buf, "]");
-            if (!section) { retval = -2; goto done; }
+        }
 
-            if (!strcmp(section, "SECTOR")) { ss = SCAN_SECTOR; }
-            else if (!strcmp(section, "WALL")) { ss = SCAN_WALL; }
-            else { retval = -3; goto done; }
-        } else {
-            switch (ss) {
-            case SCAN_WALL: {
-                struct wall *wall = &state.walls.arr[state.walls.n++];
-                if (sscanf(
-                        p,
-                        "%d %d %d %d %d",
-                        &wall->a.x,
-                        &wall->a.y,
-                        &wall->b.x,
-                        &wall->b.y,
-                        &wall->portal)
-                        != 5) {
-                    retval = -4; goto done;
-                }
-            }; break;
-            case SCAN_SECTOR: {
-                struct sector *sector = &state.sectors.arr[state.sectors.n++];
-                if (sscanf(
-                        p,
-                        "%d %zu %zu %f %f",
-                        &sector->id,
-                        &sector->firstwall,
-                        &sector->nwalls,
-                        &sector->zfloor,
-                        &sector->zceil)
-                        != 5) {
-                    retval = -5; goto done;
-                }
-            }; break;
-            default: retval = -6; goto done;
+        match parse_state {
+            State::Sector => {
+                let sector = line
+                    .parse()
+                    .map_err(|e| format!("Unable to parse sector {path:?}:{i}: {e}"))?;
+                state.sectors[state.sectors_count] = sector;
+                state.sectors_count += 1;
+            }
+            State::Wall => {
+                let wall = line
+                    .parse()
+                    .map_err(|e| format!("Unable to parse wall {path:?}:{i}: {e}"))?;
+                state.walls[state.walls_count] = wall;
+                state.walls_count += 1;
             }
         }
     }
 
-    if (ferror(f)) { retval = -128; goto done; }
-done:
-    fclose(f);
-    return retval;
+    Ok(())
 }
 
-static void verline(int x, int y0, int y1, u32 color) {
-    for (int y = y0; y <= y1; y++) {
-        state.pixels[y * SCREEN_WIDTH + x] = color;
+fn verline(state: &mut State, x: i32, y0: i32, y1: i32, color: u32) {
+    for y in y0..=y1 {
+        state.pixels[(y * SCREEN_WIDTH as i32 + x) as usize] = color;
     }
 }
 
+/*
 // point is in sector if it is on the left side of all walls
 static bool point_in_sector(const struct sector *sector, v2 p) {
     for (usize i = 0; i < sector->nwalls; i++) {
-        const struct wall *wall = &state.walls.arr[sector->firstwall + i];
+        const struct wall *Wall = &state.walls.arr[sector->firstwall + i];
 
-        if (point_side(p, v2i_to_v2(wall->a), v2i_to_v2(wall->b)) > 0) {
+        if (point_side(p, v2i_to_v2(Wall->a), v2i_to_v2(Wall->b)) > 0) {
             return false;
         }
     }
@@ -291,13 +301,13 @@ static void render() {
         const struct sector *sector = &state.sectors.arr[entry.id];
 
         for (usize i = 0; i < sector->nwalls; i++) {
-            const struct wall *wall =
+            const struct wall *Wall =
                 &state.walls.arr[sector->firstwall + i];
 
             // translate relative to player and rotate points around player's view
             const v2
-                op0 = world_pos_to_camera(v2i_to_v2(wall->a)),
-                op1 = world_pos_to_camera(v2i_to_v2(wall->b));
+                op0 = world_pos_to_camera(v2i_to_v2(Wall->a)),
+                op1 = world_pos_to_camera(v2i_to_v2(Wall->b));
 
             // wall clipped pos
             v2 cp0 = op0, cp1 = op1;
@@ -354,8 +364,8 @@ static void render() {
 
             const int wallshade =
                 16 * (sin(atan2f(
-                    wall->b.x - wall->a.x,
-                    wall->b.y - wall->b.y)) + 1.0f);
+                    Wall->b.x - Wall->a.x,
+                    Wall->b.y - Wall->b.y)) + 1.0f);
 
             const int
                 x0 = clamp(tx0, entry.x0, entry.x1),
@@ -365,9 +375,9 @@ static void render() {
                 z_floor = sector->zfloor,
                 z_ceil = sector->zceil,
                 nz_floor =
-                    wall->portal ? state.sectors.arr[wall->portal].zfloor : 0,
+                    Wall->portal ? state.sectors.arr[Wall->portal].zfloor : 0,
                 nz_ceil =
-                    wall->portal ? state.sectors.arr[wall->portal].zceil : 0;
+                    Wall->portal ? state.sectors.arr[Wall->portal].zceil : 0;
 
             const f32
                 sy0 = ifnan((VFOV * SCREEN_HEIGHT) / cp0.y, 1e10),
@@ -421,7 +431,7 @@ static void render() {
                         0xFF00FFFF);
                 }
 
-                if (wall->portal) {
+                if (Wall->portal) {
                     const int
                         tnyf = (int) (xp * nyfd) + nyf0,
                         tnyc = (int) (xp * nycd) + nyc0,
@@ -463,10 +473,10 @@ static void render() {
                 }
             }
 
-            if (wall->portal) {
+            if (Wall->portal) {
                 ASSERT(queue.n != QUEUE_MAX, "out of queue space");
                 queue.arr[queue.n++] = (struct queue_entry) {
-                    .id = wall->portal,
+                    .id = Wall->portal,
                     .x0 = x0,
                     .x1 = x1
                 };
@@ -640,16 +650,16 @@ int main(int argc, char *argv[]) {
 
                 // check neighbors
                 for (usize j = 0; j < sector->nwalls; j++) {
-                    const struct wall *wall =
+                    const struct wall *Wall =
                         &state.walls.arr[sector->firstwall + j];
 
-                    if (wall->portal) {
+                    if (Wall->portal) {
                         if (n == QUEUE_MAX) {
                             fprintf(stderr, "out of queue space!");
                             goto done;
                         }
 
-                        queue[(i + n) % QUEUE_MAX] = wall->portal;
+                        queue[(i + n) % QUEUE_MAX] = Wall->portal;
                         n++;
                     }
                 }
