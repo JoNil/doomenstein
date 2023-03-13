@@ -110,7 +110,7 @@ struct Level {
     walls_count: usize,
 }
 
-#[derive(Default)]
+#[derive(Copy, Clone, Default)]
 struct Camera {
     pos: V2,
     angle: f32,
@@ -147,10 +147,11 @@ fn world_pos_to_camera(state: &State, p: V2) -> V2 {
 
 // load sectors from file -> state
 fn load_level(path: &str) -> Result<Level, String> {
-    let mut level = Level::default();
-
     // sector 0 does not exist
-    level.sectors_count = 1;
+    let mut level = Level {
+        sectors_count: 1,
+        ..Default::default()
+    };
 
     let str = fs::read_to_string(path).map_err(|e| format!("Unable to read file {path:?}: {e}"))?;
 
@@ -198,8 +199,8 @@ fn load_level(path: &str) -> Result<Level, String> {
     Ok(level)
 }
 
-fn verline(pixels: &mut [u32], x: usize, y0: i32, y1: i32, abgr: u32) {
-    for y in (y0 as usize)..=(y1 as usize) {
+fn verline(pixels: &mut [u32], x: usize, y0: usize, y1: usize, abgr: u32) {
+    for y in y0..=y1 {
         pixels[(SCREEN_HEIGHT - y - 1) * SCREEN_WIDTH + x] = abgr.to_be().rotate_right(8);
     }
 }
@@ -230,8 +231,8 @@ struct QueueEntry {
 }
 
 fn render(state: &mut State) {
-    let mut y_lo = [0u16; SCREEN_WIDTH];
-    let mut y_hi = [(SCREEN_HEIGHT - 1) as u16; SCREEN_WIDTH];
+    let mut y_lo = [0; SCREEN_WIDTH];
+    let mut y_hi = [SCREEN_HEIGHT - 1; SCREEN_WIDTH];
 
     // track if sector has already been drawn
     let mut sectdraw = [false; SECTOR_MAX];
@@ -376,34 +377,30 @@ fn render(state: &mut State) {
                 // get y coordinates for this x
                 let tyf = (xp * yfd as f32) as i32 + yf0;
                 let tyc = (xp * ycd as f32) as i32 + yc0;
-                let yf = i32::clamp(tyf, y_lo[x] as i32, y_hi[x] as i32);
-                let yc = i32::clamp(tyc, y_lo[x] as i32, y_hi[x] as i32);
+                let yf = i32::clamp(tyf, y_lo[x] as i32, y_hi[x] as i32) as usize;
+                let yc = i32::clamp(tyc, y_lo[x] as i32, y_hi[x] as i32) as usize;
 
                 // floor
-                if yf > y_lo[x] as i32 {
-                    verline(&mut state.pixels, x, y_lo[x] as i32, yf, 0xFFFF0000);
+                if yf > y_lo[x] {
+                    verline(&mut state.pixels, x, y_lo[x], yf, 0xFFFF0000);
                 }
 
                 // ceiling
-                if yc < y_hi[x] as i32 {
-                    verline(&mut state.pixels, x, yc, y_hi[x] as i32, 0xFF00FFFF);
+                if yc < y_hi[x] {
+                    verline(&mut state.pixels, x, yc, y_hi[x], 0xFF00FFFF);
                 }
 
                 if wall.portal > 0 {
                     let tnyf = (xp * nyfd as f32) as i32 + nyf0;
                     let tnyc = (xp * nycd as f32) as i32 + nyc0;
-                    let nyf = i32::clamp(tnyf, y_lo[x] as i32, y_hi[x] as i32);
-                    let nyc = i32::clamp(tnyc, y_lo[x] as i32, y_hi[x] as i32);
+                    let nyf = i32::clamp(tnyf, y_lo[x] as i32, y_hi[x] as i32) as usize;
+                    let nyc = i32::clamp(tnyc, y_lo[x] as i32, y_hi[x] as i32) as usize;
 
                     verline(&mut state.pixels, x, nyc, yc, abgr_mul(0xFF00FF00, shade));
                     verline(&mut state.pixels, x, yf, nyf, abgr_mul(0xFF0000FF, shade));
 
-                    y_hi[x] =
-                        i32::clamp(yc.min(nyc).min(y_hi[x] as i32), 0, SCREEN_HEIGHT as i32 - 1)
-                            as u16;
-                    y_lo[x] =
-                        i32::clamp(yf.max(nyf).max(y_lo[x] as i32), 0, SCREEN_HEIGHT as i32 - 1)
-                            as u16;
+                    y_hi[x] = usize::clamp(yc.min(nyc).min(y_hi[x]), 0, SCREEN_HEIGHT - 1);
+                    y_lo[x] = usize::clamp(yf.max(nyf).max(y_lo[x]), 0, SCREEN_HEIGHT - 1);
                 } else {
                     verline(&mut state.pixels, x, yf, yc, abgr_mul(0xFFD0D0D0, shade));
                 }
@@ -454,28 +451,30 @@ fn main() {
         let rot_speed = 3.0 * 0.016;
         let move_speed = 3.0 * 0.016;
 
+        let mut new_camera = state.camera;
+
         if window.is_key_down(Key::Right) {
-            state.camera.angle -= rot_speed;
+            new_camera.angle -= rot_speed;
         }
 
         if window.is_key_down(Key::Left) {
-            state.camera.angle += rot_speed;
+            new_camera.angle += rot_speed;
         }
 
-        state.camera.anglecos = f32::cos(state.camera.angle);
-        state.camera.anglesin = f32::sin(state.camera.angle);
+        new_camera.anglecos = f32::cos(new_camera.angle);
+        new_camera.anglesin = f32::sin(new_camera.angle);
 
         if window.is_key_down(Key::Up) {
-            state.camera.pos = v2(
-                state.camera.pos.x + (move_speed * state.camera.anglecos),
-                state.camera.pos.y + (move_speed * state.camera.anglesin),
+            new_camera.pos = v2(
+                new_camera.pos.x + (move_speed * new_camera.anglecos),
+                new_camera.pos.y + (move_speed * new_camera.anglesin),
             );
         }
 
         if window.is_key_down(Key::Down) {
-            state.camera.pos = v2(
-                state.camera.pos.x - (move_speed * state.camera.anglecos),
-                state.camera.pos.y - (move_speed * state.camera.anglesin),
+            new_camera.pos = v2(
+                new_camera.pos.x - (move_speed * new_camera.anglecos),
+                new_camera.pos.y - (move_speed * new_camera.anglesin),
             );
         }
 
@@ -485,18 +484,11 @@ fn main() {
             // of the neighboring sectors
 
             let mut queue = VecDeque::new();
-            queue.push_back(state.camera.sector);
-            let mut found = SECTOR_NONE;
+            queue.push_back(new_camera.sector);
 
-            while let Some(id) = queue.pop_front() {
-                let sector = &state.level.sectors[id];
+            {
+                let sector = &state.level.sectors[new_camera.sector];
 
-                if point_in_sector(&state.level, sector, state.camera.pos) {
-                    found = id;
-                    break;
-                }
-
-                // check neighbors
                 for j in 0..sector.nwalls {
                     let wall = &state.level.walls[sector.firstwall + j];
 
@@ -506,11 +498,22 @@ fn main() {
                 }
             }
 
+            let mut found = SECTOR_NONE;
+
+            while let Some(id) = queue.pop_front() {
+                let sector = &state.level.sectors[id];
+
+                if point_in_sector(&state.level, sector, new_camera.pos) {
+                    found = id;
+                    break;
+                }
+            }
+
             if found == SECTOR_NONE {
-                println!("Player is not in a sector!");
-                state.camera.sector = 1;
+                println!("Player Collided with wall!");
             } else {
-                state.camera.sector = found;
+                new_camera.sector = found;
+                state.camera = new_camera;
             }
         }
 
