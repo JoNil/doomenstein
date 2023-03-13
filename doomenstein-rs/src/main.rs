@@ -126,9 +126,9 @@ struct State {
 }
 
 // convert angle in [-(HFOV / 2)..+(HFOV / 2)] to X coordinate
-fn screen_angle_to_x(angle: f32) -> i32 {
+fn screen_angle_to_x(angle: f32) -> usize {
     ((SCREEN_WIDTH as f32 / 2.0)
-        * (1.0 - (((angle + (FRAC_HFOV_2)) / HFOV) * FRAC_PI_2 - FRAC_PI_4).tan())) as i32
+        * (1.0 - (((angle + (FRAC_HFOV_2)) / HFOV) * FRAC_PI_2 - FRAC_PI_4).tan())) as usize
 }
 
 // noramlize angle to +/-PI
@@ -198,10 +198,9 @@ fn load_level(path: &str) -> Result<Level, String> {
     Ok(level)
 }
 
-fn verline(pixels: &mut [u32], x: i32, y0: i32, y1: i32, abgr: u32) {
-    for y in y0..=y1 {
-        pixels[((SCREEN_HEIGHT as i32 - y - 1) * SCREEN_WIDTH as i32 + x) as usize] =
-            abgr.to_be().rotate_right(8);
+fn verline(pixels: &mut [u32], x: usize, y0: i32, y1: i32, abgr: u32) {
+    for y in (y0 as usize)..=(y1 as usize) {
+        pixels[(SCREEN_HEIGHT - y - 1) * SCREEN_WIDTH + x] = abgr.to_be().rotate_right(8);
     }
 }
 
@@ -226,8 +225,8 @@ fn point_in_sector(level: &Level, sector: &Sector, p: V2) -> bool {
 #[derive(Copy, Clone, Default)]
 struct QueueEntry {
     id: usize,
-    x0: i32,
-    x1: i32,
+    x0: usize,
+    x1: usize,
 }
 
 fn render(state: &mut State) {
@@ -248,7 +247,7 @@ fn render(state: &mut State) {
     let mut queue = vec![QueueEntry {
         id: state.camera.sector,
         x0: 0,
-        x1: SCREEN_WIDTH as i32 - 1,
+        x1: SCREEN_WIDTH - 1,
     }];
 
     while !queue.is_empty() {
@@ -329,8 +328,8 @@ fn render(state: &mut State) {
                     (wall.b_y - wall.a_y) as f32,
                 )) + 1.0;
 
-            let x0 = i32::clamp(tx0, entry.x0, entry.x1);
-            let x1 = i32::clamp(tx1, entry.x0, entry.x1);
+            let x0 = usize::clamp(tx0, entry.x0, entry.x1);
+            let x1 = usize::clamp(tx1, entry.x0, entry.x1);
 
             let z_floor = sector.zfloor;
             let z_ceil = sector.zceil;
@@ -377,51 +376,34 @@ fn render(state: &mut State) {
                 // get y coordinates for this x
                 let tyf = (xp * yfd as f32) as i32 + yf0;
                 let tyc = (xp * ycd as f32) as i32 + yc0;
-                let yf = i32::clamp(tyf, y_lo[x as usize] as i32, y_hi[x as usize] as i32);
-                let yc = i32::clamp(tyc, y_lo[x as usize] as i32, y_hi[x as usize] as i32);
+                let yf = i32::clamp(tyf, y_lo[x] as i32, y_hi[x] as i32);
+                let yc = i32::clamp(tyc, y_lo[x] as i32, y_hi[x] as i32);
 
                 // floor
-                if yf > y_lo[x as usize] as i32 {
-                    verline(
-                        &mut state.pixels,
-                        x,
-                        y_lo[x as usize] as i32,
-                        yf,
-                        0xFFFF0000,
-                    );
+                if yf > y_lo[x] as i32 {
+                    verline(&mut state.pixels, x, y_lo[x] as i32, yf, 0xFFFF0000);
                 }
 
                 // ceiling
-                if yc < y_hi[x as usize] as i32 {
-                    verline(
-                        &mut state.pixels,
-                        x,
-                        yc,
-                        y_hi[x as usize] as i32,
-                        0xFF00FFFF,
-                    );
+                if yc < y_hi[x] as i32 {
+                    verline(&mut state.pixels, x, yc, y_hi[x] as i32, 0xFF00FFFF);
                 }
 
                 if wall.portal > 0 {
                     let tnyf = (xp * nyfd as f32) as i32 + nyf0;
                     let tnyc = (xp * nycd as f32) as i32 + nyc0;
-                    let nyf = i32::clamp(tnyf, y_lo[x as usize] as i32, y_hi[x as usize] as i32);
-                    let nyc = i32::clamp(tnyc, y_lo[x as usize] as i32, y_hi[x as usize] as i32);
+                    let nyf = i32::clamp(tnyf, y_lo[x] as i32, y_hi[x] as i32);
+                    let nyc = i32::clamp(tnyc, y_lo[x] as i32, y_hi[x] as i32);
 
                     verline(&mut state.pixels, x, nyc, yc, abgr_mul(0xFF00FF00, shade));
-
                     verline(&mut state.pixels, x, yf, nyf, abgr_mul(0xFF0000FF, shade));
 
-                    y_hi[x as usize] = u16::clamp(
-                        i32::min(i32::min(yc, nyc), y_hi[x as usize] as i32) as u16,
-                        0,
-                        SCREEN_HEIGHT as u16 - 1,
-                    );
-                    y_lo[x as usize] = u16::clamp(
-                        i32::max(i32::max(yf, nyf), y_lo[x as usize] as i32) as u16,
-                        0,
-                        SCREEN_HEIGHT as u16 - 1,
-                    );
+                    y_hi[x] =
+                        i32::clamp(yc.min(nyc).min(y_hi[x] as i32), 0, SCREEN_HEIGHT as i32 - 1)
+                            as u16;
+                    y_lo[x] =
+                        i32::clamp(yf.max(nyf).max(y_lo[x] as i32), 0, SCREEN_HEIGHT as i32 - 1)
+                            as u16;
                 } else {
                     verline(&mut state.pixels, x, yf, yc, abgr_mul(0xFFD0D0D0, shade));
                 }
