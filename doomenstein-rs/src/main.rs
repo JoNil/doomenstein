@@ -1,7 +1,6 @@
 use minifb::{Key, Scale, ScaleMode, Window, WindowOptions};
 use parse_display::FromStr;
 use std::{
-    collections::VecDeque,
     f32::{
         consts::{FRAC_PI_2, FRAC_PI_4, PI, TAU},
         NAN,
@@ -223,13 +222,6 @@ fn point_in_sector(level: &Level, sector: &Sector, p: V2) -> bool {
     true
 }
 
-#[derive(Copy, Clone, Default)]
-struct QueueEntry {
-    id: usize,
-    x0: usize,
-    x1: usize,
-}
-
 fn render(state: &mut State) {
     let mut y_lo = [0; SCREEN_WIDTH];
     let mut y_hi = [SCREEN_HEIGHT - 1; SCREEN_WIDTH];
@@ -245,23 +237,16 @@ fn render(state: &mut State) {
     let zfl = v2(zdl.x * ZFAR, zdl.y * ZFAR);
     let zfr = v2(zdr.x * ZFAR, zdr.y * ZFAR);
 
-    let mut queue = vec![QueueEntry {
-        id: state.camera.sector,
-        x0: 0,
-        x1: SCREEN_WIDTH - 1,
-    }];
+    let mut queue = vec![(state.camera.sector, 0, SCREEN_WIDTH - 1)];
 
-    while !queue.is_empty() {
-        // grab tail of queue
-        let entry = queue.pop().unwrap();
-
-        if sectdraw[entry.id] {
+    while let Some((id, x0, x1)) = queue.pop() {
+        if sectdraw[id] {
             continue;
         }
 
-        sectdraw[entry.id] = true;
+        sectdraw[id] = true;
 
-        let sector = &state.level.sectors[entry.id];
+        let sector = &state.level.sectors[id];
 
         for i in 0..sector.nwalls {
             let wall = &state.level.walls[sector.firstwall + i];
@@ -311,15 +296,14 @@ fn render(state: &mut State) {
             }
 
             // "true" xs before portal clamping
-
             let tx0 = screen_angle_to_x(ap0);
             let tx1 = screen_angle_to_x(ap1);
 
             // bounds check against portal window
-            if tx0 > entry.x1 {
+            if tx0 > x1 {
                 continue;
             }
-            if tx1 < entry.x0 {
+            if tx1 < x0 {
                 continue;
             }
 
@@ -329,8 +313,8 @@ fn render(state: &mut State) {
                     (wall.b_y - wall.a_y) as f32,
                 )) + 1.0;
 
-            let x0 = usize::clamp(tx0, entry.x0, entry.x1);
-            let x1 = usize::clamp(tx1, entry.x0, entry.x1);
+            let x0 = usize::clamp(tx0, x0, x1);
+            let x1 = usize::clamp(tx1, x0, x1);
 
             let z_floor = sector.zfloor;
             let z_ceil = sector.zceil;
@@ -407,11 +391,7 @@ fn render(state: &mut State) {
             }
 
             if wall.portal > 0 {
-                queue.push(QueueEntry {
-                    id: wall.portal,
-                    x0,
-                    x1,
-                });
+                queue.push((wall.portal, x0, x1));
             }
         }
     }
@@ -483,8 +463,7 @@ fn main() {
             // BFS neighbors in a circular queue, player is likely to be in one
             // of the neighboring sectors
 
-            let mut queue = VecDeque::new();
-            queue.push_back(new_camera.sector);
+            let mut queue = vec![new_camera.sector];
 
             {
                 let sector = &state.level.sectors[new_camera.sector];
@@ -493,14 +472,14 @@ fn main() {
                     let wall = &state.level.walls[sector.firstwall + j];
 
                     if wall.portal > 0 {
-                        queue.push_back(wall.portal)
+                        queue.push(wall.portal)
                     }
                 }
             }
 
             let mut found = SECTOR_NONE;
 
-            while let Some(id) = queue.pop_front() {
+            while let Some(id) = queue.pop() {
                 let sector = &state.level.sectors[id];
 
                 if point_in_sector(&state.level, sector, new_camera.pos) {
