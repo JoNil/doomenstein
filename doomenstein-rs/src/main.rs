@@ -102,6 +102,15 @@ struct Sector {
 }
 
 #[derive(Default)]
+struct Level {
+    sectors: [Sector; 32],
+    sectors_count: usize,
+
+    walls: [Wall; 32],
+    walls_count: usize,
+}
+
+#[derive(Default)]
 struct Camera {
     pos: V2,
     angle: f32,
@@ -113,11 +122,7 @@ struct Camera {
 struct State {
     pixels: Vec<u32>,
 
-    sectors: [Sector; 32],
-    sectors_count: usize,
-
-    walls: [Wall; 32],
-    walls_count: usize,
+    level: Level,
 
     y_lo: [u16; SCREEN_WIDTH],
     y_hi: [u16; SCREEN_WIDTH],
@@ -146,9 +151,11 @@ fn world_pos_to_camera(state: &State, p: V2) -> V2 {
 }
 
 // load sectors from file -> state
-fn load_sectors(state: &mut State, path: &str) -> Result<(), String> {
+fn load_level(path: &str) -> Result<Level, String> {
+    let mut level = Level::default();
+
     // sector 0 does not exist
-    state.sectors_count = 1;
+    level.sectors_count = 1;
 
     let str = fs::read_to_string(path).map_err(|e| format!("Unable to read file {path:?}: {e}"))?;
 
@@ -180,20 +187,20 @@ fn load_sectors(state: &mut State, path: &str) -> Result<(), String> {
                 let sector = line
                     .parse()
                     .map_err(|e| format!("Unable to parse sector {path}:{}: {e}", i + 1))?;
-                state.sectors[state.sectors_count] = sector;
-                state.sectors_count += 1;
+                level.sectors[level.sectors_count] = sector;
+                level.sectors_count += 1;
             }
             State::Wall => {
                 let wall = line
                     .parse()
                     .map_err(|e| format!("Unable to parse wall {path}:{}: {e}", i + 1))?;
-                state.walls[state.walls_count] = wall;
-                state.walls_count += 1;
+                level.walls[level.walls_count] = wall;
+                level.walls_count += 1;
             }
         }
     }
 
-    Ok(())
+    Ok(level)
 }
 
 fn verline(pixels: &mut [u32], x: i32, y0: i32, y1: i32, abgr: u32) {
@@ -204,9 +211,9 @@ fn verline(pixels: &mut [u32], x: i32, y0: i32, y1: i32, abgr: u32) {
 }
 
 // point is in sector if it is on the left side of all walls
-fn point_in_sector(state: &State, sector: &Sector, p: V2) -> bool {
+fn point_in_sector(level: &Level, sector: &Sector, p: V2) -> bool {
     for i in 0..sector.nwalls {
-        let wall = &state.walls[sector.firstwall + i];
+        let wall = &level.walls[sector.firstwall + i];
 
         if point_side(
             p,
@@ -261,10 +268,10 @@ fn render(state: &mut State) {
 
         sectdraw[entry.id] = true;
 
-        let sector = &state.sectors[entry.id];
+        let sector = &state.level.sectors[entry.id];
 
         for i in 0..sector.nwalls {
-            let wall = &state.walls[sector.firstwall + i];
+            let wall = &state.level.walls[sector.firstwall + i];
 
             // translate relative to player and rotate points around player's view
             let op0 = world_pos_to_camera(state, v2(wall.a_x as f32, wall.a_y as f32));
@@ -335,12 +342,12 @@ fn render(state: &mut State) {
             let z_floor = sector.zfloor;
             let z_ceil = sector.zceil;
             let nz_floor = if wall.portal > 0 {
-                state.sectors[wall.portal].zfloor
+                state.level.sectors[wall.portal].zfloor
             } else {
                 0.0
             };
             let nz_ceil = if wall.portal > 0 {
-                state.sectors[wall.portal].zceil
+                state.level.sectors[wall.portal].zceil
             } else {
                 0.0
             };
@@ -471,6 +478,8 @@ fn main() {
 
     let pixels = vec![0; SCREEN_WIDTH * SCREEN_HEIGHT * 4];
 
+    let level = load_level("level.txt").unwrap();
+
     let mut state = State {
         pixels,
         camera: Camera {
@@ -479,19 +488,10 @@ fn main() {
             sector: 1,
             ..Default::default()
         },
-        sectors: [Sector::default(); 32],
-        sectors_count: 0,
-        walls: [Wall::default(); 32],
-        walls_count: 0,
+        level,
         y_lo: [0; SCREEN_WIDTH],
         y_hi: [0; SCREEN_WIDTH],
     };
-
-    load_sectors(&mut state, "level.txt").unwrap();
-    println!(
-        "Loaded {} sectors with {} walls",
-        state.sectors_count, state.walls_count
-    );
 
     while window.is_open() && !window.is_key_down(Key::Escape) {
         let rot_speed = 3.0 * 0.016;
@@ -532,16 +532,16 @@ fn main() {
             let mut found = SECTOR_NONE;
 
             while let Some(id) = queue.pop_front() {
-                let sector = &state.sectors[id];
+                let sector = &state.level.sectors[id];
 
-                if point_in_sector(&state, sector, state.camera.pos) {
+                if point_in_sector(&state.level, sector, state.camera.pos) {
                     found = id;
                     break;
                 }
 
                 // check neighbors
                 for j in 0..sector.nwalls {
-                    let wall = &state.walls[sector.firstwall + j];
+                    let wall = &state.level.walls[sector.firstwall + j];
 
                     if wall.portal > 0 {
                         queue.push_back(wall.portal)
