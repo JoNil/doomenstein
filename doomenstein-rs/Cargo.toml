@@ -5,4 +5,4 @@ edition = "2021"
 
 [dependencies]
 parse-display = "0.8"
-sdl2 = { version = "0.35", features = ["unsafe_textures"] }
+minifb = "0.24"

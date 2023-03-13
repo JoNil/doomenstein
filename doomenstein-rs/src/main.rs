@@ -1,12 +1,5 @@
+use minifb::{Key, Scale, ScaleMode, Window, WindowOptions};
 use parse_display::FromStr;
-use sdl2::{
-    event::Event,
-    keyboard::{Keycode, Scancode},
-    pixels::{Color, PixelFormatEnum},
-    rect::Rect,
-    render::{BlendMode, Canvas, Texture, TextureAccess},
-    video::Window,
-};
 use std::{
     collections::VecDeque,
     f32::{
@@ -28,8 +21,7 @@ const VFOV: f32 = 0.5;
 const ZNEAR: f32 = 0.0001;
 const ZFAR: f32 = 128.0;
 
-#[derive(Copy, Clone, Default, FromStr)]
-#[display("{x} {y}")]
+#[derive(Copy, Clone, Default)]
 struct V2 {
     x: f32,
     y: f32,
@@ -37,38 +29,6 @@ struct V2 {
 
 fn v2(x: f32, y: f32) -> V2 {
     V2 { x, y }
-}
-
-#[derive(Copy, Clone, Default, FromStr)]
-#[display("{x} {y}")]
-struct V2i {
-    x: i32,
-    y: i32,
-}
-
-fn v2i(x: i32, y: i32) -> V2i {
-    V2i { x, y }
-}
-
-fn v2_to_v2i(v: V2) -> V2i {
-    v2i(v.x as i32, v.y as i32)
-}
-
-fn v2i_to_v2(v: V2i) -> V2 {
-    v2(v.x as f32, v.y as f32)
-}
-
-fn dot(v0: V2, v1: V2) -> f32 {
-    (v0.x * v1.x) + (v0.y * v1.y)
-}
-
-fn length(v: V2) -> f32 {
-    dot(v, v).sqrt()
-}
-
-fn noramlize(v: V2) -> V2 {
-    let len = length(v);
-    v2(v.x / len, v.y / len)
 }
 
 fn ifnan(x: f32, alt: f32) -> f32 {
@@ -118,10 +78,12 @@ fn abgr_mul(col: u32, a: u32) -> u32 {
 }
 
 #[derive(Copy, Clone, Default, FromStr)]
-#[display("{a} {b} {portal}")]
+#[display("{a_x} {a_y} {b_x} {b_y} {portal}")]
 struct Wall {
-    a: V2i,
-    b: V2i,
+    a_x: i32,
+    a_y: i32,
+    b_x: i32,
+    b_y: i32,
     portal: usize,
 }
 
@@ -149,10 +111,7 @@ struct Camera {
 }
 
 struct State {
-    canvas: Canvas<Window>,
-    texture: Texture,
-    debug: Texture,
-    pixels: Vec<u8>,
+    pixels: Vec<u32>,
 
     sectors: [Sector; 32],
     sectors_count: usize,
@@ -164,8 +123,6 @@ struct State {
     y_hi: [u16; SCREEN_WIDTH],
 
     camera: Camera,
-
-    sleepy: bool,
 }
 
 // convert angle in [-(HFOV / 2)..+(HFOV / 2)] to X coordinate
@@ -176,7 +133,7 @@ fn screen_angle_to_x(angle: f32) -> i32 {
 
 // noramlize angle to +/-PI
 fn normalize_angle(a: f32) -> f32 {
-    return a - (TAU * ((a + PI) / TAU).floor());
+    a - (TAU * ((a + PI) / TAU).floor())
 }
 
 // world space -> camera space (translate and rotate)
@@ -207,9 +164,11 @@ fn load_sectors(state: &mut State, path: &str) -> Result<(), String> {
 
         if line == "[SECTOR]" {
             parse_state = State::Sector;
+            continue;
         }
         if line == "[WALL]" {
             parse_state = State::Wall;
+            continue;
         }
 
         if line.starts_with('#') || line.is_empty() {
@@ -220,14 +179,14 @@ fn load_sectors(state: &mut State, path: &str) -> Result<(), String> {
             State::Sector => {
                 let sector = line
                     .parse()
-                    .map_err(|e| format!("Unable to parse sector {path:?}:{i}: {e}"))?;
+                    .map_err(|e| format!("Unable to parse sector {path}:{}: {e}", i + 1))?;
                 state.sectors[state.sectors_count] = sector;
                 state.sectors_count += 1;
             }
             State::Wall => {
                 let wall = line
                     .parse()
-                    .map_err(|e| format!("Unable to parse wall {path:?}:{i}: {e}"))?;
+                    .map_err(|e| format!("Unable to parse wall {path}:{}: {e}", i + 1))?;
                 state.walls[state.walls_count] = wall;
                 state.walls_count += 1;
             }
@@ -237,11 +196,10 @@ fn load_sectors(state: &mut State, path: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn verline(pixels: &mut [u8], x: i32, y0: i32, y1: i32, color: u32) {
+fn verline(pixels: &mut [u32], x: i32, y0: i32, y1: i32, abgr: u32) {
     for y in y0..=y1 {
-        let px = (y * SCREEN_WIDTH as i32 + x) as usize;
-        let px_end = px + 4;
-        pixels[px..px_end].copy_from_slice(&color.to_le_bytes());
+        pixels[((SCREEN_HEIGHT as i32 - y - 1) * SCREEN_WIDTH as i32 + x) as usize] =
+            abgr.to_be().rotate_right(8);
     }
 }
 
@@ -250,7 +208,12 @@ fn point_in_sector(state: &State, sector: &Sector, p: V2) -> bool {
     for i in 0..sector.nwalls {
         let wall = &state.walls[sector.firstwall + i];
 
-        if point_side(p, v2i_to_v2(wall.a), v2i_to_v2(wall.b)) > 0.0 {
+        if point_side(
+            p,
+            v2(wall.a_x as f32, wall.a_y as f32),
+            v2(wall.b_x as f32, wall.b_y as f32),
+        ) > 0.0
+        {
             return false;
         }
     }
@@ -304,8 +267,8 @@ fn render(state: &mut State) {
             let wall = &state.walls[sector.firstwall + i];
 
             // translate relative to player and rotate points around player's view
-            let op0 = world_pos_to_camera(state, v2i_to_v2(wall.a));
-            let op1 = world_pos_to_camera(state, v2i_to_v2(wall.b));
+            let op0 = world_pos_to_camera(state, v2(wall.a_x as f32, wall.a_y as f32));
+            let op1 = world_pos_to_camera(state, v2(wall.b_x as f32, wall.b_y as f32));
 
             // wall clipped pos
             let (mut cp0, mut cp1) = (op0, op1);
@@ -362,8 +325,8 @@ fn render(state: &mut State) {
 
             let wallshade =
                 16.0 * f32::sin(f32::atan2(
-                    (wall.b.x - wall.a.x) as f32,
-                    (wall.b.y - wall.a.y) as f32,
+                    (wall.b_x - wall.a_x) as f32,
+                    (wall.b_y - wall.a_y) as f32,
                 )) + 1.0;
 
             let x0 = i32::clamp(tx0, entry.x0, entry.x1);
@@ -478,16 +441,6 @@ fn render(state: &mut State) {
                 } else {
                     verline(&mut state.pixels, x, yf, yc, abgr_mul(0xFFD0D0D0, shade));
                 }
-
-                if state.sleepy {
-                    present(
-                        &mut state.texture,
-                        &state.debug,
-                        &mut state.canvas,
-                        &state.pixels,
-                    );
-                    std::thread::sleep(Duration::from_millis(10));
-                }
             }
 
             if wall.portal > 0 {
@@ -499,76 +452,26 @@ fn render(state: &mut State) {
             }
         }
     }
-
-    state.sleepy = false;
-}
-
-fn present(texture: &mut Texture, debug: &Texture, canvas: &mut Canvas<Window>, pixels: &[u8]) {
-    texture.with_lock(None, |px, pitch| {
-        for y in 0..SCREEN_HEIGHT {
-            let start_px = y * pitch;
-            let end_px = start_px + SCREEN_WIDTH * 4;
-
-            let start = y * SCREEN_WIDTH;
-            let end = start + SCREEN_WIDTH * 4;
-
-            px[start_px..end_px].copy_from_slice(&pixels[start..end])
-        }
-    });
-
-    canvas.set_draw_color(Color::RGBA(0, 0, 0, 0xff));
-    canvas.set_blend_mode(BlendMode::None);
-
-    canvas.clear();
-    canvas.copy_ex(&texture, None, None, 0.0, None, false, true);
-
-    canvas.set_blend_mode(BlendMode::Blend);
-
-    canvas.copy(&debug, None, Some(Rect::new(0, 0, 512, 512)));
-
-    canvas.present();
 }
 
 fn main() {
-    let sdl_context = sdl2::init().unwrap();
-    let video_subsystem = sdl_context.video().unwrap();
+    let mut window = Window::new(
+        "raycast-rs",
+        SCREEN_WIDTH,
+        SCREEN_HEIGHT,
+        WindowOptions {
+            scale: Scale::X4,
+            scale_mode: ScaleMode::Stretch,
+            ..Default::default()
+        },
+    )
+    .unwrap();
 
-    let window = video_subsystem
-        .window("raycast-rs", 1280, 720)
-        .position_centered()
-        .build()
-        .unwrap();
-
-    let canvas = window
-        .into_canvas()
-        .accelerated()
-        .present_vsync()
-        .build()
-        .unwrap();
-
-    let texture = canvas
-        .create_texture(
-            Some(PixelFormatEnum::ABGR8888),
-            TextureAccess::Streaming,
-            SCREEN_WIDTH as u32,
-            SCREEN_HEIGHT as u32,
-        )
-        .unwrap();
-    let debug = canvas
-        .create_texture(
-            Some(PixelFormatEnum::ABGR8888),
-            TextureAccess::Target,
-            128,
-            128,
-        )
-        .unwrap();
+    window.limit_update_rate(Some(Duration::from_micros(16667)));
 
     let pixels = vec![0; SCREEN_WIDTH * SCREEN_HEIGHT * 4];
 
     let mut state = State {
-        canvas,
-        texture,
-        debug,
         pixels,
         camera: Camera {
             pos: v2(3.0, 3.0),
@@ -582,63 +485,41 @@ fn main() {
         walls_count: 0,
         y_lo: [0; SCREEN_WIDTH],
         y_hi: [0; SCREEN_WIDTH],
-        sleepy: false,
     };
 
-    load_sectors(&mut state, "level.txt");
+    load_sectors(&mut state, "level.txt").unwrap();
     println!(
         "Loaded {} sectors with {} walls",
         state.sectors_count, state.walls_count
     );
 
-    let mut event_pump = sdl_context.event_pump().unwrap();
-
-    'running: loop {
-        for event in event_pump.poll_iter() {
-            match event {
-                Event::Quit { .. }
-                | Event::KeyDown {
-                    keycode: Some(Keycode::Escape),
-                    ..
-                } => {
-                    break 'running;
-                }
-                _ => {}
-            }
-        }
-
+    while window.is_open() && !window.is_key_down(Key::Escape) {
         let rot_speed = 3.0 * 0.016;
         let move_speed = 3.0 * 0.016;
 
-        let keystate = event_pump.keyboard_state();
-
-        if keystate.is_scancode_pressed(Scancode::Right) {
+        if window.is_key_down(Key::Right) {
             state.camera.angle -= rot_speed;
         }
 
-        if keystate.is_scancode_pressed(Scancode::Left) {
+        if window.is_key_down(Key::Left) {
             state.camera.angle += rot_speed;
         }
 
         state.camera.anglecos = f32::cos(state.camera.angle);
         state.camera.anglesin = f32::sin(state.camera.angle);
 
-        if keystate.is_scancode_pressed(Scancode::Up) {
+        if window.is_key_down(Key::Up) {
             state.camera.pos = v2(
                 state.camera.pos.x + (move_speed * state.camera.anglecos),
                 state.camera.pos.y + (move_speed * state.camera.anglesin),
             );
         }
 
-        if keystate.is_scancode_pressed(Scancode::Down) {
+        if window.is_key_down(Key::Down) {
             state.camera.pos = v2(
                 state.camera.pos.x - (move_speed * state.camera.anglecos),
                 state.camera.pos.y - (move_speed * state.camera.anglesin),
             );
-        }
-
-        if keystate.is_scancode_pressed(Scancode::F1) {
-            state.sleepy = true;
         }
 
         // update player sector
@@ -668,7 +549,7 @@ fn main() {
                 }
             }
 
-            if found != SECTOR_NONE {
+            if found == SECTOR_NONE {
                 println!("Player is not in a sector!");
                 state.camera.sector = 1;
             } else {
@@ -677,13 +558,8 @@ fn main() {
         }
 
         render(&mut state);
-        if !state.sleepy {
-            present(
-                &mut state.texture,
-                &state.debug,
-                &mut state.canvas,
-                &state.pixels,
-            );
-        }
+        window
+            .update_with_buffer(&state.pixels, SCREEN_WIDTH, SCREEN_HEIGHT)
+            .unwrap();
     }
 }
