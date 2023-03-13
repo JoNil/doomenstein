@@ -121,12 +121,7 @@ struct Camera {
 
 struct State {
     pixels: Vec<u32>,
-
     level: Level,
-
-    y_lo: [u16; SCREEN_WIDTH],
-    y_hi: [u16; SCREEN_WIDTH],
-
     camera: Camera,
 }
 
@@ -236,10 +231,8 @@ struct QueueEntry {
 }
 
 fn render(state: &mut State) {
-    for i in 0..SCREEN_WIDTH {
-        state.y_hi[i] = (SCREEN_HEIGHT - 1) as u16;
-        state.y_lo[i] = 0;
-    }
+    let mut y_lo = [0u16; SCREEN_WIDTH];
+    let mut y_hi = [(SCREEN_HEIGHT - 1) as u16; SCREEN_WIDTH];
 
     // track if sector has already been drawn
     let mut sectdraw = [false; SECTOR_MAX];
@@ -384,35 +377,27 @@ fn render(state: &mut State) {
                 // get y coordinates for this x
                 let tyf = (xp * yfd as f32) as i32 + yf0;
                 let tyc = (xp * ycd as f32) as i32 + yc0;
-                let yf = i32::clamp(
-                    tyf,
-                    state.y_lo[x as usize] as i32,
-                    state.y_hi[x as usize] as i32,
-                );
-                let yc = i32::clamp(
-                    tyc,
-                    state.y_lo[x as usize] as i32,
-                    state.y_hi[x as usize] as i32,
-                );
+                let yf = i32::clamp(tyf, y_lo[x as usize] as i32, y_hi[x as usize] as i32);
+                let yc = i32::clamp(tyc, y_lo[x as usize] as i32, y_hi[x as usize] as i32);
 
                 // floor
-                if yf > state.y_lo[x as usize] as i32 {
+                if yf > y_lo[x as usize] as i32 {
                     verline(
                         &mut state.pixels,
                         x,
-                        state.y_lo[x as usize] as i32,
+                        y_lo[x as usize] as i32,
                         yf,
                         0xFFFF0000,
                     );
                 }
 
                 // ceiling
-                if yc < state.y_hi[x as usize] as i32 {
+                if yc < y_hi[x as usize] as i32 {
                     verline(
                         &mut state.pixels,
                         x,
                         yc,
-                        state.y_hi[x as usize] as i32,
+                        y_hi[x as usize] as i32,
                         0xFF00FFFF,
                     );
                 }
@@ -420,28 +405,20 @@ fn render(state: &mut State) {
                 if wall.portal > 0 {
                     let tnyf = (xp * nyfd as f32) as i32 + nyf0;
                     let tnyc = (xp * nycd as f32) as i32 + nyc0;
-                    let nyf = i32::clamp(
-                        tnyf,
-                        state.y_lo[x as usize] as i32,
-                        state.y_hi[x as usize] as i32,
-                    );
-                    let nyc = i32::clamp(
-                        tnyc,
-                        state.y_lo[x as usize] as i32,
-                        state.y_hi[x as usize] as i32,
-                    );
+                    let nyf = i32::clamp(tnyf, y_lo[x as usize] as i32, y_hi[x as usize] as i32);
+                    let nyc = i32::clamp(tnyc, y_lo[x as usize] as i32, y_hi[x as usize] as i32);
 
                     verline(&mut state.pixels, x, nyc, yc, abgr_mul(0xFF00FF00, shade));
 
                     verline(&mut state.pixels, x, yf, nyf, abgr_mul(0xFF0000FF, shade));
 
-                    state.y_hi[x as usize] = u16::clamp(
-                        i32::min(i32::min(yc, nyc), state.y_hi[x as usize] as i32) as u16,
+                    y_hi[x as usize] = u16::clamp(
+                        i32::min(i32::min(yc, nyc), y_hi[x as usize] as i32) as u16,
                         0,
                         SCREEN_HEIGHT as u16 - 1,
                     );
-                    state.y_lo[x as usize] = u16::clamp(
-                        i32::max(i32::max(yf, nyf), state.y_lo[x as usize] as i32) as u16,
+                    y_lo[x as usize] = u16::clamp(
+                        i32::max(i32::max(yf, nyf), y_lo[x as usize] as i32) as u16,
                         0,
                         SCREEN_HEIGHT as u16 - 1,
                     );
@@ -489,8 +466,6 @@ fn main() {
             ..Default::default()
         },
         level,
-        y_lo: [0; SCREEN_WIDTH],
-        y_hi: [0; SCREEN_WIDTH],
     };
 
     while window.is_open() && !window.is_key_down(Key::Escape) {
