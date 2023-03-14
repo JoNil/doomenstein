@@ -26,16 +26,6 @@ fn ifnan(x: f32, alt: f32) -> f32 {
     }
 }
 
-// -1 right, 0 on, 1 left
-fn point_side(p: Vec2, a: Vec2, b: Vec2) -> f32 {
-    -(p - a).perp_dot(b - a)
-}
-
-// rotate vector v by angle a
-fn rotate(v: Vec2, a: f32) -> Vec2 {
-    Mat2::from_angle(a).mul_vec2(v)
-}
-
 // see: https://en.wikipedia.org/wiki/Line–line_intersection
 // compute intersection of two line segments, returns None if there is
 // no intersection.
@@ -182,6 +172,11 @@ fn verline(pixels: &mut [u32], x: usize, y0: usize, y1: usize, abgr: u32) {
     }
 }
 
+// -1 right, 0 on, 1 left
+fn point_side(p: Vec2, a: Vec2, b: Vec2) -> f32 {
+    -(p - a).perp_dot(b - a)
+}
+
 // point is in sector if it is on the left side of all walls
 fn point_in_sector(level: &Level, sector: &Sector, p: Vec2) -> bool {
     for i in 0..sector.nwalls {
@@ -208,8 +203,8 @@ fn render(pixels: &mut [u32], level: &Level, camera: &Camera) {
     let mut sectdraw = [false; SECTOR_MAX];
 
     // calculate edges of near/far planes (looking down +Y axis)
-    let zdl = rotate(vec2(0.0, 1.0), FRAC_HFOV_2);
-    let zdr = rotate(vec2(0.0, 1.0), -FRAC_HFOV_2);
+    let zdl = Mat2::from_angle(FRAC_HFOV_2).mul_vec2(Vec2::Y);
+    let zdr = Mat2::from_angle(-FRAC_HFOV_2).mul_vec2(Vec2::Y);
     let znl = vec2(zdl.x * ZNEAR, zdl.y * ZNEAR);
     let znr = vec2(zdr.x * ZNEAR, zdr.y * ZNEAR);
     let zfl = vec2(zdl.x * ZFAR, zdl.y * ZFAR);
