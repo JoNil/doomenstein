@@ -54,6 +54,29 @@ fn abgr_mul(col: u32, a: u32) -> u32 {
     0xFF000000 | (br & 0xFF00FF) | (g & 0x00FF00)
 }
 
+#[derive(Copy, Clone, Default)]
+struct Camera {
+    pos: Vec2,
+    angle: f32,
+    camera_rot: Mat2,
+    sector: usize,
+}
+
+fn world_to_camera(camera: &Camera, p: Vec2) -> Vec2 {
+    camera.camera_rot.mul_vec2(p - camera.pos)
+}
+
+// convert angle in [-(HFOV / 2)..+(HFOV / 2)] to X coordinate
+fn screen_angle_to_x(angle: f32) -> usize {
+    ((SCREEN_WIDTH as f32 / 2.0)
+        * (1.0 - (((angle + (FRAC_HFOV_2)) / HFOV) * FRAC_PI_2 - FRAC_PI_4).tan())) as usize
+}
+
+// noramlize angle to +/-PI
+fn normalize_angle(a: f32) -> f32 {
+    a - (TAU * ((a + PI) / TAU).floor())
+}
+
 #[derive(Copy, Clone, Default, FromStr)]
 #[display("{a.x} {a.y} {b.x} {b.y} {portal}")]
 struct Wall {
@@ -87,27 +110,10 @@ struct Level {
     walls_count: usize,
 }
 
-#[derive(Copy, Clone, Default)]
-struct Camera {
-    pos: Vec2,
-    angle: f32,
-    camera_rot: Mat2,
-    sector: usize,
-}
-
-fn world_to_camera(camera: &Camera, p: Vec2) -> Vec2 {
-    camera.camera_rot.mul_vec2(p - camera.pos)
-}
-
-// convert angle in [-(HFOV / 2)..+(HFOV / 2)] to X coordinate
-fn screen_angle_to_x(angle: f32) -> usize {
-    ((SCREEN_WIDTH as f32 / 2.0)
-        * (1.0 - (((angle + (FRAC_HFOV_2)) / HFOV) * FRAC_PI_2 - FRAC_PI_4).tan())) as usize
-}
-
-// noramlize angle to +/-PI
-fn normalize_angle(a: f32) -> f32 {
-    a - (TAU * ((a + PI) / TAU).floor())
+impl Level {
+    fn walls_in_sector(&self, sector: &Sector) -> impl Iterator<Item = &Wall> {
+        self.walls[sector.firstwall..(sector.firstwall + sector.nwalls)].iter()
+    }
 }
 
 // load sectors from file -> state
@@ -164,12 +170,6 @@ fn load_level(path: &str) -> Result<Level, String> {
     Ok(level)
 }
 
-fn verline(pixels: &mut [u32], x: usize, y0: usize, y1: usize, abgr: u32) {
-    for y in y0..=y1 {
-        pixels[(SCREEN_HEIGHT - y - 1) * SCREEN_WIDTH + x] = abgr.to_be().rotate_right(8);
-    }
-}
-
 // -1 right, 0 on, 1 left
 fn point_side(p: Vec2, a: Vec2, b: Vec2) -> f32 {
     -(p - a).perp_dot(b - a)
@@ -177,15 +177,19 @@ fn point_side(p: Vec2, a: Vec2, b: Vec2) -> f32 {
 
 // point is in sector if it is on the left side of all walls
 fn point_in_sector(level: &Level, sector: &Sector, p: Vec2) -> bool {
-    for i in 0..sector.nwalls {
-        let wall = &level.walls[sector.firstwall + i];
-
+    for wall in level.walls_in_sector(sector) {
         if point_side(p, wall.a, wall.b) > 0.0 {
             return false;
         }
     }
 
     true
+}
+
+fn verline(pixels: &mut [u32], x: usize, y0: usize, y1: usize, abgr: u32) {
+    for y in y0..=y1 {
+        pixels[(SCREEN_HEIGHT - y - 1) * SCREEN_WIDTH + x] = abgr.to_be().rotate_right(8);
+    }
 }
 
 fn render(pixels: &mut [u32], level: &Level, camera: &Camera) {
@@ -214,9 +218,7 @@ fn render(pixels: &mut [u32], level: &Level, camera: &Camera) {
 
         let sector = &level.sectors[id];
 
-        for i in 0..sector.nwalls {
-            let wall = &level.walls[sector.firstwall + i];
-
+        for wall in level.walls_in_sector(sector) {
             // translate relative to player and rotate points around player's view
             let op0 = world_to_camera(camera, wall.a);
             let op1 = world_to_camera(camera, wall.b);
@@ -417,24 +419,16 @@ fn main() {
 
             let mut queue = vec![new_camera.sector];
 
-            {
-                let sector = &level.sectors[new_camera.sector];
-
-                for j in 0..sector.nwalls {
-                    let wall = &level.walls[sector.firstwall + j];
-
-                    if wall.portal > 0 {
-                        queue.push(wall.portal)
-                    }
+            for wall in level.walls_in_sector(&level.sectors[new_camera.sector]) {
+                if wall.portal > 0 {
+                    queue.push(wall.portal)
                 }
             }
 
             let mut found = SECTOR_NONE;
 
             while let Some(id) = queue.pop() {
-                let sector = &level.sectors[id];
-
-                if point_in_sector(&level, sector, new_camera.pos) {
+                if point_in_sector(&level, &level.sectors[id], new_camera.pos) {
                     found = id;
                     break;
                 }
