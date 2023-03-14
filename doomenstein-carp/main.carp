@@ -1,0 +1,48 @@
+(use IO)
+(use Maybe)
+
+(Project.config "title" "doomenstein-carp")
+
+(deftype Vec2 [x Float, y Float])
+
+(defn add [a b]
+  (init (+ a.x b.x)
+        (+ a.y b.y)))
+
+(defn sub [a b]
+  (init (- a.x b.x)
+        (- a.y b.y)))
+
+(defn mul [a t]
+  (init (* a.x @t)
+        (* a.y @t)))
+
+(defn cross [a b]
+  (- (* a.x b.y)
+     (* b.x a.y)))
+
+(defn intersection [p1 p2 q1 q2]
+  (let [r (sub p2 p1)
+        s (sub q2 q1)
+        qp (sub q1 p1)
+        t (/ (cross qp r) (cross s r))
+        u (/ (cross qp s) (cross r s))]
+    (if (and (>= t 0.0f) (<= t 1.0f) (>= u 0.0f) (<= u 1.0f))
+      (Maybe.Just (add p1 (mul r t)))
+      (Maybe.Nothing))))
+
+(defn main []
+  (do
+    (println "Hello, world!")
+    (println "Hello, world!")))
+
+I can’t match the types `Float` and `(Ref (Fn [(Ref Vec2 k)] (Ref Float k)) r108)`. within `(mul r t)`
+
+  t : Float
+  At line 31, column 34 in 'C:/dev/doomenstein/doomenstein-carp/main.carp'
+
+  Expected second argument to 'mul' : (Ref (Fn [(Ref Vec2 k)] (Ref Float k)) r108)
+  At line 31, column 28 in 'C:/dev/doomenstein/doomenstein-carp/main.carp' at C:/dev/doomenstein/doomenstein-carp/main.carp:24:2.
+
+Traceback:
+  (defn intersection [p1 p2 q1 q2] (let [r (sub p2 p1) s (sub ...) at C:/dev/doomenstein/doomenstein-carp/main.carp:24:1.
