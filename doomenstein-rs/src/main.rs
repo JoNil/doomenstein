@@ -96,7 +96,7 @@ struct Camera {
 }
 
 impl Camera {
-    fn world_pos(&self, p: Vec2) -> Vec2 {
+    fn world_to_camera(&self, p: Vec2) -> Vec2 {
         self.camera_rot.mul_vec2(p - self.pos)
     }
 }
@@ -205,10 +205,10 @@ fn render(pixels: &mut [u32], level: &Level, camera: &Camera) {
     // calculate edges of near/far planes (looking down +Y axis)
     let zdl = Mat2::from_angle(FRAC_HFOV_2).mul_vec2(Vec2::Y);
     let zdr = Mat2::from_angle(-FRAC_HFOV_2).mul_vec2(Vec2::Y);
-    let znl = vec2(zdl.x * ZNEAR, zdl.y * ZNEAR);
-    let znr = vec2(zdr.x * ZNEAR, zdr.y * ZNEAR);
-    let zfl = vec2(zdl.x * ZFAR, zdl.y * ZFAR);
-    let zfr = vec2(zdr.x * ZFAR, zdr.y * ZFAR);
+    let znl = zdl * ZNEAR;
+    let znr = zdr * ZNEAR;
+    let zfl = zdl * ZFAR;
+    let zfr = zdr * ZFAR;
 
     let mut queue = vec![(camera.sector, 0, SCREEN_WIDTH - 1)];
 
@@ -225,8 +225,8 @@ fn render(pixels: &mut [u32], level: &Level, camera: &Camera) {
             let wall = &level.walls[sector.firstwall + i];
 
             // translate relative to player and rotate points around player's view
-            let op0 = camera.world_pos(vec2(wall.a_x as f32, wall.a_y as f32));
-            let op1 = camera.world_pos(vec2(wall.b_x as f32, wall.b_y as f32));
+            let op0 = camera.world_to_camera(vec2(wall.a_x as f32, wall.a_y as f32));
+            let op1 = camera.world_to_camera(vec2(wall.b_x as f32, wall.b_y as f32));
 
             // wall clipped pos
             let (mut cp0, mut cp1) = (op0, op1);
