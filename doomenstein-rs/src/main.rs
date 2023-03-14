@@ -3,7 +3,7 @@ use minifb::{Key, Scale, ScaleMode, Window, WindowOptions};
 use parse_display::FromStr;
 use std::{
     f32::consts::{FRAC_PI_2, FRAC_PI_4, PI, TAU},
-    fs::{self},
+    fs,
     time::Duration,
 };
 
@@ -55,12 +55,12 @@ fn abgr_mul(col: u32, a: u32) -> u32 {
 }
 
 #[derive(Copy, Clone, Default, FromStr)]
-#[display("{a_x} {a_y} {b_x} {b_y} {portal}")]
+#[display("{a.x} {a.y} {b.x} {b.y} {portal}")]
 struct Wall {
-    a_x: i32,
-    a_y: i32,
-    b_x: i32,
-    b_y: i32,
+    #[from_str(default)]
+    a: Vec2,
+    #[from_str(default)]
+    b: Vec2,
     portal: usize,
 }
 
@@ -180,12 +180,7 @@ fn point_in_sector(level: &Level, sector: &Sector, p: Vec2) -> bool {
     for i in 0..sector.nwalls {
         let wall = &level.walls[sector.firstwall + i];
 
-        if point_side(
-            p,
-            vec2(wall.a_x as f32, wall.a_y as f32),
-            vec2(wall.b_x as f32, wall.b_y as f32),
-        ) > 0.0
-        {
+        if point_side(p, wall.a, wall.b) > 0.0 {
             return false;
         }
     }
@@ -223,8 +218,8 @@ fn render(pixels: &mut [u32], level: &Level, camera: &Camera) {
             let wall = &level.walls[sector.firstwall + i];
 
             // translate relative to player and rotate points around player's view
-            let op0 = world_to_camera(camera, vec2(wall.a_x as f32, wall.a_y as f32));
-            let op1 = world_to_camera(camera, vec2(wall.b_x as f32, wall.b_y as f32));
+            let op0 = world_to_camera(camera, wall.a);
+            let op1 = world_to_camera(camera, wall.b);
 
             // wall clipped pos
             let (mut cp0, mut cp1) = (op0, op1);
@@ -278,11 +273,8 @@ fn render(pixels: &mut [u32], level: &Level, camera: &Camera) {
                 continue;
             }
 
-            let wallshade =
-                16.0 * f32::sin(f32::atan2(
-                    (wall.b_x - wall.a_x) as f32,
-                    (wall.b_y - wall.a_y) as f32,
-                )) + 1.0;
+            let wall_diff = wall.b - wall.a;
+            let wallshade = 16.0 * f32::sin(f32::atan2(wall_diff.x, wall_diff.y)) + 1.0;
 
             let x0 = usize::clamp(tx0, x0, x1);
             let x1 = usize::clamp(tx1, x0, x1);
