@@ -1,10 +1,7 @@
 use minifb::{Key, Scale, ScaleMode, Window, WindowOptions};
 use parse_display::FromStr;
 use std::{
-    f32::{
-        consts::{FRAC_PI_2, FRAC_PI_4, PI, TAU},
-        NAN,
-    },
+    f32::consts::{FRAC_PI_2, FRAC_PI_4, PI, TAU},
     fs::{self},
     time::Duration,
 };
@@ -13,7 +10,7 @@ const SCREEN_WIDTH: usize = 384;
 const SCREEN_HEIGHT: usize = 216;
 
 const EYE_Z: f32 = 1.65;
-const HFOV: f32 = 90.0 * std::f32::consts::PI / 180.0;
+const HFOV: f32 = 120.0 * std::f32::consts::PI / 180.0;
 const FRAC_HFOV_2: f32 = HFOV / 2.0;
 const VFOV: f32 = 0.5;
 
@@ -52,21 +49,21 @@ fn rotate(v: V2, a: f32) -> V2 {
 }
 
 // see: https://en.wikipedia.org/wiki/Line–line_intersection
-// compute intersection of two line segments, returns (NAN, NAN) if there is
+// compute intersection of two line segments, returns None if there is
 // no intersection.
-fn intersect_segs(a0: V2, a1: V2, b0: V2, b1: V2) -> V2 {
+fn intersect_segs(a0: V2, a1: V2, b0: V2, b1: V2) -> Option<V2> {
     let d = ((a0.x - a1.x) * (b0.y - b1.y)) - ((a0.y - a1.y) * (b0.x - b1.x));
 
     if d.abs() < 0.000001 {
-        return v2(NAN, NAN);
+        return None;
     }
 
     let t = (((a0.x - b0.x) * (b0.y - b1.y)) - ((a0.y - b0.y) * (b0.x - b1.x))) / d;
     let u = (((a0.x - b0.x) * (a0.y - a1.y)) - ((a0.y - b0.y) * (a0.x - a1.x))) / d;
-    if t >= 0.0 && t <= 1.0 && u >= 0.0 && u <= 1.0 {
-        v2(a0.x + (t * (a1.x - a0.x)), a0.y + (t * (a1.y - a0.y)))
+    if (0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u) {
+        Some(v2(a0.x + (t * (a1.x - a0.x)), a0.y + (t * (a1.y - a0.y))))
     } else {
-        v2(NAN, NAN)
+        None
     }
 }
 
@@ -91,9 +88,9 @@ const SECTOR_NONE: usize = 0;
 const SECTOR_MAX: usize = 128;
 
 #[derive(Copy, Clone, Default, FromStr)]
-#[display("{id} {firstwall} {nwalls} {zfloor} {zceil}")]
+#[display("{_id} {firstwall} {nwalls} {zfloor} {zceil}")]
 struct Sector {
-    id: i32,
+    _id: i32,
     firstwall: usize,
     nwalls: usize,
     zfloor: f32,
@@ -274,12 +271,12 @@ fn render(state: &mut State) {
                 let ir = intersect_segs(cp0, cp1, znr, zfr);
 
                 // recompute angles if points change
-                if !il.x.is_nan() {
+                if let Some(il) = il {
                     cp0 = il;
                     ap0 = normalize_angle(f32::atan2(cp0.y, cp0.x) - FRAC_PI_2);
                 }
 
-                if !ir.x.is_nan() {
+                if let Some(ir) = ir {
                     cp1 = ir;
                     ap1 = normalize_angle(f32::atan2(cp1.y, cp1.x) - FRAC_PI_2);
                 }
