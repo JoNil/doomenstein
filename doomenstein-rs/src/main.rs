@@ -1,3 +1,4 @@
+use glam::{vec2, Vec2};
 use minifb::{Key, Scale, ScaleMode, Window, WindowOptions};
 use parse_display::FromStr;
 use std::{
@@ -17,16 +18,6 @@ const VFOV: f32 = 0.5;
 const ZNEAR: f32 = 0.0001;
 const ZFAR: f32 = 128.0;
 
-#[derive(Copy, Clone, Default)]
-struct V2 {
-    x: f32,
-    y: f32,
-}
-
-fn v2(x: f32, y: f32) -> V2 {
-    V2 { x, y }
-}
-
 fn ifnan(x: f32, alt: f32) -> f32 {
     if x.is_nan() {
         alt
@@ -36,13 +27,13 @@ fn ifnan(x: f32, alt: f32) -> f32 {
 }
 
 // -1 right, 0 on, 1 left
-fn point_side(p: V2, a: V2, b: V2) -> f32 {
-    -(((p.x - a.x) * (b.y - a.y)) - ((p.y - a.y) * (b.x - a.x)))
+fn point_side(p: Vec2, a: Vec2, b: Vec2) -> f32 {
+    -(p - a).perp_dot(b - a)
 }
 
 // rotate vector v by angle a
-fn rotate(v: V2, a: f32) -> V2 {
-    v2(
+fn rotate(v: Vec2, a: f32) -> Vec2 {
+    vec2(
         (v.x * a.cos()) - (v.y * a.sin()),
         (v.x * a.sin()) + (v.y * a.cos()),
     )
@@ -51,7 +42,7 @@ fn rotate(v: V2, a: f32) -> V2 {
 // see: https://en.wikipedia.org/wiki/Line–line_intersection
 // compute intersection of two line segments, returns None if there is
 // no intersection.
-fn intersect_segs(a0: V2, a1: V2, b0: V2, b1: V2) -> Option<V2> {
+fn intersect_segs(a0: Vec2, a1: Vec2, b0: Vec2, b1: Vec2) -> Option<Vec2> {
     let d = ((a0.x - a1.x) * (b0.y - b1.y)) - ((a0.y - a1.y) * (b0.x - b1.x));
 
     if d.abs() < 0.000001 {
@@ -61,7 +52,7 @@ fn intersect_segs(a0: V2, a1: V2, b0: V2, b1: V2) -> Option<V2> {
     let t = (((a0.x - b0.x) * (b0.y - b1.y)) - ((a0.y - b0.y) * (b0.x - b1.x))) / d;
     let u = (((a0.x - b0.x) * (a0.y - a1.y)) - ((a0.y - b0.y) * (a0.x - a1.x))) / d;
     if (0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u) {
-        Some(v2(a0.x + (t * (a1.x - a0.x)), a0.y + (t * (a1.y - a0.y))))
+        Some(vec2(a0.x + (t * (a1.x - a0.x)), a0.y + (t * (a1.y - a0.y))))
     } else {
         None
     }
@@ -108,7 +99,7 @@ struct Level {
 
 #[derive(Copy, Clone, Default)]
 struct Camera {
-    pos: V2,
+    pos: Vec2,
     angle: f32,
     anglecos: f32,
     anglesin: f32,
@@ -133,9 +124,9 @@ fn normalize_angle(a: f32) -> f32 {
 }
 
 // world space -> camera space (translate and rotate)
-fn world_pos_to_camera(state: &State, p: V2) -> V2 {
-    let u = v2(p.x - state.camera.pos.x, p.y - state.camera.pos.y);
-    v2(
+fn world_pos_to_camera(state: &State, p: Vec2) -> Vec2 {
+    let u = vec2(p.x - state.camera.pos.x, p.y - state.camera.pos.y);
+    vec2(
         u.x * state.camera.anglesin - u.y * state.camera.anglecos,
         u.x * state.camera.anglecos + u.y * state.camera.anglesin,
     )
@@ -202,14 +193,14 @@ fn verline(pixels: &mut [u32], x: usize, y0: usize, y1: usize, abgr: u32) {
 }
 
 // point is in sector if it is on the left side of all walls
-fn point_in_sector(level: &Level, sector: &Sector, p: V2) -> bool {
+fn point_in_sector(level: &Level, sector: &Sector, p: Vec2) -> bool {
     for i in 0..sector.nwalls {
         let wall = &level.walls[sector.firstwall + i];
 
         if point_side(
             p,
-            v2(wall.a_x as f32, wall.a_y as f32),
-            v2(wall.b_x as f32, wall.b_y as f32),
+            vec2(wall.a_x as f32, wall.a_y as f32),
+            vec2(wall.b_x as f32, wall.b_y as f32),
         ) > 0.0
         {
             return false;
@@ -227,12 +218,12 @@ fn render(state: &mut State) {
     let mut sectdraw = [false; SECTOR_MAX];
 
     // calculate edges of near/far planes (looking down +Y axis)
-    let zdl = rotate(v2(0.0, 1.0), FRAC_HFOV_2);
-    let zdr = rotate(v2(0.0, 1.0), -FRAC_HFOV_2);
-    let znl = v2(zdl.x * ZNEAR, zdl.y * ZNEAR);
-    let znr = v2(zdr.x * ZNEAR, zdr.y * ZNEAR);
-    let zfl = v2(zdl.x * ZFAR, zdl.y * ZFAR);
-    let zfr = v2(zdr.x * ZFAR, zdr.y * ZFAR);
+    let zdl = rotate(vec2(0.0, 1.0), FRAC_HFOV_2);
+    let zdr = rotate(vec2(0.0, 1.0), -FRAC_HFOV_2);
+    let znl = vec2(zdl.x * ZNEAR, zdl.y * ZNEAR);
+    let znr = vec2(zdr.x * ZNEAR, zdr.y * ZNEAR);
+    let zfl = vec2(zdl.x * ZFAR, zdl.y * ZFAR);
+    let zfr = vec2(zdr.x * ZFAR, zdr.y * ZFAR);
 
     let mut queue = vec![(state.camera.sector, 0, SCREEN_WIDTH - 1)];
 
@@ -249,8 +240,8 @@ fn render(state: &mut State) {
             let wall = &state.level.walls[sector.firstwall + i];
 
             // translate relative to player and rotate points around player's view
-            let op0 = world_pos_to_camera(state, v2(wall.a_x as f32, wall.a_y as f32));
-            let op1 = world_pos_to_camera(state, v2(wall.b_x as f32, wall.b_y as f32));
+            let op0 = world_pos_to_camera(state, vec2(wall.a_x as f32, wall.a_y as f32));
+            let op1 = world_pos_to_camera(state, vec2(wall.b_x as f32, wall.b_y as f32));
 
             // wall clipped pos
             let (mut cp0, mut cp1) = (op0, op1);
@@ -416,7 +407,7 @@ fn main() {
     let mut state = State {
         pixels,
         camera: Camera {
-            pos: v2(3.0, 3.0),
+            pos: vec2(3.0, 3.0),
             angle: 0.0,
             sector: 1,
             ..Default::default()
@@ -442,14 +433,14 @@ fn main() {
         new_camera.anglesin = f32::sin(new_camera.angle);
 
         if window.is_key_down(Key::Up) {
-            new_camera.pos = v2(
+            new_camera.pos = vec2(
                 new_camera.pos.x + (move_speed * new_camera.anglecos),
                 new_camera.pos.y + (move_speed * new_camera.anglesin),
             );
         }
 
         if window.is_key_down(Key::Down) {
-            new_camera.pos = v2(
+            new_camera.pos = vec2(
                 new_camera.pos.x - (move_speed * new_camera.anglecos),
                 new_camera.pos.y - (move_speed * new_camera.anglesin),
             );
