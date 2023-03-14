@@ -43,16 +43,19 @@ fn rotate(v: Vec2, a: f32) -> Vec2 {
 // compute intersection of two line segments, returns None if there is
 // no intersection.
 fn intersect_segs(a0: Vec2, a1: Vec2, b0: Vec2, b1: Vec2) -> Option<Vec2> {
-    let d = ((a0.x - a1.x) * (b0.y - b1.y)) - ((a0.y - a1.y) * (b0.x - b1.x));
+    let a_diff = a0 - a1;
+    let b_diff = b0 - b1;
+    let d = a_diff.perp_dot(b_diff);
 
     if d.abs() < 0.000001 {
         return None;
     }
 
-    let t = (((a0.x - b0.x) * (b0.y - b1.y)) - ((a0.y - b0.y) * (b0.x - b1.x))) / d;
-    let u = (((a0.x - b0.x) * (a0.y - a1.y)) - ((a0.y - b0.y) * (a0.x - a1.x))) / d;
+    let ab = a0 - b0;
+    let t = ab.perp_dot(b_diff) / d;
+    let u = ab.perp_dot(a_diff) / d;
     if (0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u) {
-        Some(vec2(a0.x + (t * (a1.x - a0.x)), a0.y + (t * (a1.y - a0.y))))
+        Some(a0 - t * a_diff)
     } else {
         None
     }
