@@ -1,4 +1,4 @@
-use glam::{vec2, Vec2};
+use glam::{vec2, Mat2, Vec2};
 use minifb::{Key, Scale, ScaleMode, Window, WindowOptions};
 use parse_display::FromStr;
 use std::{
@@ -33,10 +33,7 @@ fn point_side(p: Vec2, a: Vec2, b: Vec2) -> f32 {
 
 // rotate vector v by angle a
 fn rotate(v: Vec2, a: f32) -> Vec2 {
-    vec2(
-        (v.x * a.cos()) - (v.y * a.sin()),
-        (v.x * a.sin()) + (v.y * a.cos()),
-    )
+    Mat2::from_angle(a).mul_vec2(v)
 }
 
 // see: https://en.wikipedia.org/wiki/Line–line_intersection
@@ -104,15 +101,14 @@ struct Level {
 struct Camera {
     pos: Vec2,
     angle: f32,
-    anglecos: f32,
-    anglesin: f32,
+    camera_rot: Mat2,
     sector: usize,
 }
 
-struct State {
-    pixels: Vec<u32>,
-    level: Level,
-    camera: Camera,
+impl Camera {
+    fn world_pos(&self, p: Vec2) -> Vec2 {
+        self.camera_rot.mul_vec2(p - self.pos)
+    }
 }
 
 // convert angle in [-(HFOV / 2)..+(HFOV / 2)] to X coordinate
@@ -124,15 +120,6 @@ fn screen_angle_to_x(angle: f32) -> usize {
 // noramlize angle to +/-PI
 fn normalize_angle(a: f32) -> f32 {
     a - (TAU * ((a + PI) / TAU).floor())
-}
-
-// world space -> camera space (translate and rotate)
-fn world_pos_to_camera(state: &State, p: Vec2) -> Vec2 {
-    let u = vec2(p.x - state.camera.pos.x, p.y - state.camera.pos.y);
-    vec2(
-        u.x * state.camera.anglesin - u.y * state.camera.anglecos,
-        u.x * state.camera.anglecos + u.y * state.camera.anglesin,
-    )
 }
 
 // load sectors from file -> state
@@ -213,7 +200,7 @@ fn point_in_sector(level: &Level, sector: &Sector, p: Vec2) -> bool {
     true
 }
 
-fn render(state: &mut State) {
+fn render(pixels: &mut [u32], level: &Level, camera: &Camera) {
     let mut y_lo = [0; SCREEN_WIDTH];
     let mut y_hi = [SCREEN_HEIGHT - 1; SCREEN_WIDTH];
 
@@ -228,7 +215,7 @@ fn render(state: &mut State) {
     let zfl = vec2(zdl.x * ZFAR, zdl.y * ZFAR);
     let zfr = vec2(zdr.x * ZFAR, zdr.y * ZFAR);
 
-    let mut queue = vec![(state.camera.sector, 0, SCREEN_WIDTH - 1)];
+    let mut queue = vec![(camera.sector, 0, SCREEN_WIDTH - 1)];
 
     while let Some((id, x0, x1)) = queue.pop() {
         if sectdraw[id] {
@@ -237,14 +224,14 @@ fn render(state: &mut State) {
 
         sectdraw[id] = true;
 
-        let sector = &state.level.sectors[id];
+        let sector = &level.sectors[id];
 
         for i in 0..sector.nwalls {
-            let wall = &state.level.walls[sector.firstwall + i];
+            let wall = &level.walls[sector.firstwall + i];
 
             // translate relative to player and rotate points around player's view
-            let op0 = world_pos_to_camera(state, vec2(wall.a_x as f32, wall.a_y as f32));
-            let op1 = world_pos_to_camera(state, vec2(wall.b_x as f32, wall.b_y as f32));
+            let op0 = camera.world_pos(vec2(wall.a_x as f32, wall.a_y as f32));
+            let op1 = camera.world_pos(vec2(wall.b_x as f32, wall.b_y as f32));
 
             // wall clipped pos
             let (mut cp0, mut cp1) = (op0, op1);
@@ -310,12 +297,12 @@ fn render(state: &mut State) {
             let z_floor = sector.zfloor;
             let z_ceil = sector.zceil;
             let nz_floor = if wall.portal > 0 {
-                state.level.sectors[wall.portal].zfloor
+                level.sectors[wall.portal].zfloor
             } else {
                 0.0
             };
             let nz_ceil = if wall.portal > 0 {
-                state.level.sectors[wall.portal].zceil
+                level.sectors[wall.portal].zceil
             } else {
                 0.0
             };
@@ -357,12 +344,12 @@ fn render(state: &mut State) {
 
                 // floor
                 if yf > y_lo[x] {
-                    verline(&mut state.pixels, x, y_lo[x], yf, 0xFFFF0000);
+                    verline(pixels, x, y_lo[x], yf, 0xFFFF0000);
                 }
 
                 // ceiling
                 if yc < y_hi[x] {
-                    verline(&mut state.pixels, x, yc, y_hi[x], 0xFF00FFFF);
+                    verline(pixels, x, yc, y_hi[x], 0xFF00FFFF);
                 }
 
                 if wall.portal > 0 {
@@ -371,13 +358,13 @@ fn render(state: &mut State) {
                     let nyf = i32::clamp(tnyf, y_lo[x] as i32, y_hi[x] as i32) as usize;
                     let nyc = i32::clamp(tnyc, y_lo[x] as i32, y_hi[x] as i32) as usize;
 
-                    verline(&mut state.pixels, x, nyc, yc, abgr_mul(0xFF00FF00, shade));
-                    verline(&mut state.pixels, x, yf, nyf, abgr_mul(0xFF0000FF, shade));
+                    verline(pixels, x, nyc, yc, abgr_mul(0xFF00FF00, shade));
+                    verline(pixels, x, yf, nyf, abgr_mul(0xFF0000FF, shade));
 
                     y_hi[x] = usize::clamp(yc.min(nyc).min(y_hi[x]), 0, SCREEN_HEIGHT - 1);
                     y_lo[x] = usize::clamp(yf.max(nyf).max(y_lo[x]), 0, SCREEN_HEIGHT - 1);
                 } else {
-                    verline(&mut state.pixels, x, yf, yc, abgr_mul(0xFFD0D0D0, shade));
+                    verline(pixels, x, yf, yc, abgr_mul(0xFFD0D0D0, shade));
                 }
             }
 
@@ -403,26 +390,22 @@ fn main() {
 
     window.limit_update_rate(Some(Duration::from_micros(16667)));
 
-    let pixels = vec![0; SCREEN_WIDTH * SCREEN_HEIGHT * 4];
+    let mut pixels = vec![0; SCREEN_WIDTH * SCREEN_HEIGHT * 4];
 
     let level = load_level("level.txt").unwrap();
 
-    let mut state = State {
-        pixels,
-        camera: Camera {
-            pos: vec2(3.0, 3.0),
-            angle: 0.0,
-            sector: 1,
-            ..Default::default()
-        },
-        level,
+    let mut camera = Camera {
+        pos: vec2(3.0, 3.0),
+        angle: 0.0,
+        sector: 1,
+        ..Default::default()
     };
 
     while window.is_open() && !window.is_key_down(Key::Escape) {
         let rot_speed = 3.0 * 0.016;
         let move_speed = 3.0 * 0.016;
 
-        let mut new_camera = state.camera;
+        let mut new_camera = camera;
 
         if window.is_key_down(Key::Right) {
             new_camera.angle -= rot_speed;
@@ -432,21 +415,14 @@ fn main() {
             new_camera.angle += rot_speed;
         }
 
-        new_camera.anglecos = f32::cos(new_camera.angle);
-        new_camera.anglesin = f32::sin(new_camera.angle);
+        new_camera.camera_rot = Mat2::from_angle(-new_camera.angle);
 
         if window.is_key_down(Key::Up) {
-            new_camera.pos = vec2(
-                new_camera.pos.x + (move_speed * new_camera.anglecos),
-                new_camera.pos.y + (move_speed * new_camera.anglesin),
-            );
+            new_camera.pos += new_camera.camera_rot.row(1) * move_speed;
         }
 
         if window.is_key_down(Key::Down) {
-            new_camera.pos = vec2(
-                new_camera.pos.x - (move_speed * new_camera.anglecos),
-                new_camera.pos.y - (move_speed * new_camera.anglesin),
-            );
+            new_camera.pos += new_camera.camera_rot.row(1) * -move_speed;
         }
 
         // update player sector
@@ -457,10 +433,10 @@ fn main() {
             let mut queue = vec![new_camera.sector];
 
             {
-                let sector = &state.level.sectors[new_camera.sector];
+                let sector = &level.sectors[new_camera.sector];
 
                 for j in 0..sector.nwalls {
-                    let wall = &state.level.walls[sector.firstwall + j];
+                    let wall = &level.walls[sector.firstwall + j];
 
                     if wall.portal > 0 {
                         queue.push(wall.portal)
@@ -471,9 +447,9 @@ fn main() {
             let mut found = SECTOR_NONE;
 
             while let Some(id) = queue.pop() {
-                let sector = &state.level.sectors[id];
+                let sector = &level.sectors[id];
 
-                if point_in_sector(&state.level, sector, new_camera.pos) {
+                if point_in_sector(&level, sector, new_camera.pos) {
                     found = id;
                     break;
                 }
@@ -483,13 +459,13 @@ fn main() {
                 println!("Player Collided with wall!");
             } else {
                 new_camera.sector = found;
-                state.camera = new_camera;
+                camera = new_camera;
             }
         }
 
-        render(&mut state);
+        render(&mut pixels, &level, &camera);
         window
-            .update_with_buffer(&state.pixels, SCREEN_WIDTH, SCREEN_HEIGHT)
+            .update_with_buffer(&pixels, SCREEN_WIDTH, SCREEN_HEIGHT)
             .unwrap();
     }
 }
