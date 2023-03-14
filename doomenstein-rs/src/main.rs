@@ -95,10 +95,8 @@ struct Camera {
     sector: usize,
 }
 
-impl Camera {
-    fn world_to_camera(&self, p: Vec2) -> Vec2 {
-        self.camera_rot.mul_vec2(p - self.pos)
-    }
+fn world_to_camera(camera: &Camera, p: Vec2) -> Vec2 {
+    camera.camera_rot.mul_vec2(p - camera.pos)
 }
 
 // convert angle in [-(HFOV / 2)..+(HFOV / 2)] to X coordinate
@@ -225,8 +223,8 @@ fn render(pixels: &mut [u32], level: &Level, camera: &Camera) {
             let wall = &level.walls[sector.firstwall + i];
 
             // translate relative to player and rotate points around player's view
-            let op0 = camera.world_to_camera(vec2(wall.a_x as f32, wall.a_y as f32));
-            let op1 = camera.world_to_camera(vec2(wall.b_x as f32, wall.b_y as f32));
+            let op0 = world_to_camera(camera, vec2(wall.a_x as f32, wall.a_y as f32));
+            let op1 = world_to_camera(camera, vec2(wall.b_x as f32, wall.b_y as f32));
 
             // wall clipped pos
             let (mut cp0, mut cp1) = (op0, op1);
