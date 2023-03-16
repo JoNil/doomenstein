@@ -9,23 +9,23 @@
 (defn vec2-x [v] (copy (Vec2.x v)))
 (defn vec2-y [v] (copy (Vec2.y v)))
 
-(defn add [a b]
+(defn add [a Vec2, b Vec2]
   (vec2 (+ (vec2-x a) (vec2-x b))
         (+ (vec2-y a) (vec2-y b))))
 
-(defn sub [a b]
+(defn sub [a Vec2, b Vec2]
   (vec2 (- (vec2-x a) (vec2-x b))
         (- (vec2-y a) (vec2-y b))))
 
-(defn mul [a t]
+(defn mul [a Vec2, t Float]
   (vec2 (* (vec2-x a) t)
         (* (vec2-y a) t)))
 
-(defn cross [a b]
+(defn cross [a Vec2, b Vec2]
   (- (* (vec2-x a) (vec2-y b))
      (* (vec2-x b) (vec2-y a))))
 
-(defn intersection [p1 p2 q1 q2]
+(defn intersection [p1 Vec2, p2 Vec2, q1 Vec2, q2 Vec2]
   (let [r (sub p2 p1)
         s (sub q2 q1)
         qp (sub q1 p1)
