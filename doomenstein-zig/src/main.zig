@@ -80,6 +80,25 @@ fn intersect_segs(a1: Vec2, a2: Vec2, b1: Vec2, b2: Vec2) ?Vec2 {
     };
 }
 
+fn abgr_mul(a: u32, b: u32) u32 {
+    const a_a = (a >> 24) & 0xFF;
+    const a_r = (a >> 16) & 0xFF;
+    const a_g = (a >> 8) & 0xFF;
+    const a_b = a & 0xFF;
+
+    const b_a = (b >> 24) & 0xFF;
+    const b_r = (b >> 16) & 0xFF;
+    const b_g = (b >> 8) & 0xFF;
+    const b_b = b & 0xFF;
+
+    const r_a = a_a * b_a / 255;
+    const r_r = a_r * b_r / 255;
+    const r_g = a_g * b_g / 255;
+    const r_b = a_b * b_b / 255;
+
+    return (r_a << 24) | (r_r << 16) | (r_g << 8) | r_b;
+}
+
 pub fn main() !void {
     std.debug.print("All your {s} are belong to us.\n", .{"codebase"});
 }
